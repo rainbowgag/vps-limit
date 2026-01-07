@@ -1,0 +1,8 @@
+限速脚本，可自定义vps的限制速度
+清除限速命令：
+
+IFACE=$(ip route get 1.1.1.1 | awk '{print $5; exit}')
+
+tc qdisc del dev "$IFACE" ingress 2>/dev/null || true
+tc qdisc del dev ifb0 root 2>/dev/null || true
+ip link del ifb0 2>/dev/null || true
