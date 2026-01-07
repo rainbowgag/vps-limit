@@ -2,49 +2,58 @@
 set -e
 
 echo "===================================="
-echo " VPS 限速脚本（交互式）"
+echo " VPS 限速脚本（tc + cake 稳定版）"
 echo " 请输入需要限制的带宽（单位：Mbps）"
-echo " 示例：20 表示限速 20M"
+echo " 示例：15 表示限速 15M"
 echo "===================================="
 read -p "请输入限速数值（Mbps）: " SPEED
 
-# 校验输入
 if ! [[ "$SPEED" =~ ^[0-9]+$ ]] || [ "$SPEED" -le 0 ]; then
-  echo "❌ 输入无效，请输入正整数，例如 20"
+  echo "❌ 输入无效，请输入正整数，例如 15"
   exit 1
 fi
-
-# Mbps 转 Kbps
-DOWN=$((SPEED * 1000))
-UP=$((SPEED * 1000))
 
 # 自动识别主网卡
 IFACE=$(ip route get 1.1.1.1 | awk '{print $5; exit}')
 
-echo "------------------------------------"
 echo "检测到主网卡: $IFACE"
 echo "设置限速: ${SPEED} Mbps（上下行）"
-echo "------------------------------------"
-
-# 安装 wondershaper
-apt update -y
-apt install -y wondershaper
 
 # 清理旧规则
-wondershaper clear $IFACE || true
+tc qdisc del dev $IFACE root 2>/dev/null || true
+tc qdisc del dev $IFACE ingress 2>/dev/null || true
 
-# 设置限速
-wondershaper $IFACE $DOWN $UP
+# 下行限速
+tc qdisc add dev $IFACE root cake bandwidth ${SPEED}Mbit
 
-# 写入 systemd 开机自启
-cat > /etc/systemd/system/wondershaper-limit.service <<EOF
+# 上行限速（ingress + ifb）
+modprobe ifb || true
+ip link add ifb0 type ifb 2>/dev/null || true
+ip link set ifb0 up
+
+tc qdisc add dev $IFACE handle ffff: ingress
+tc filter add dev $IFACE parent ffff: protocol ip u32 match u32 0 0 action mirred egress redirect dev ifb0
+tc qdisc add dev ifb0 root cake bandwidth ${SPEED}Mbit
+
+# 写 systemd
+cat > /etc/systemd/system/vps-limit.service <<EOF
 [Unit]
 Description=VPS Bandwidth Limit (${SPEED}Mbps)
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/sbin/wondershaper $IFACE $DOWN $UP
+ExecStart=/bin/bash -c "\
+tc qdisc del dev $IFACE root 2>/dev/null || true; \
+tc qdisc del dev $IFACE ingress 2>/dev/null || true; \
+tc qdisc add dev $IFACE root cake bandwidth ${SPEED}Mbit; \
+modprobe ifb || true; \
+ip link add ifb0 type ifb 2>/dev/null || true; \
+ip link set ifb0 up; \
+tc qdisc add dev $IFACE handle ffff: ingress; \
+tc filter add dev $IFACE parent ffff: protocol ip u32 match u32 0 0 action mirred egress redirect dev ifb0; \
+tc qdisc add dev ifb0 root cake bandwidth ${SPEED}Mbit"
 RemainAfterExit=yes
 
 [Install]
@@ -52,11 +61,10 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable wondershaper-limit
-systemctl start wondershaper-limit
+systemctl enable vps-limit
+systemctl start vps-limit
 
 echo "===================================="
-echo "✅ VPS 已成功限速为 ${SPEED} Mbps（上下行）"
-echo "查看状态: wondershaper show $IFACE"
-echo "解除限速: wondershaper clear $IFACE"
+echo "✅ 已成功限速为 ${SPEED} Mbps（上下行）"
+echo "验证命令: tc qdisc show dev $IFACE"
 echo "===================================="
