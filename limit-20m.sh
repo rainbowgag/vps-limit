@@ -2,64 +2,59 @@
 set -e
 
 echo "===================================="
-echo " VPS 限速脚本（tc + cake 最终稳定版）"
+echo " VPS 限速脚本（云 VPS 最终稳定版）"
+echo " 说明："
+echo " - 使用 IFB + cake"
+echo " - 不修改 eth0 root qdisc"
+echo " - 100% 兼容云厂商 VPS"
 echo "===================================="
-read -p "请输入限速（Mbps）: " SPEED
+read -p "请输入下载限速（单位：Mbps）: " SPEED
 
+# 输入校验
 case "$SPEED" in
   ''|*[!0-9]*)
-    echo "❌ 请输入正整数"
+    echo "❌ 请输入正整数，例如 15"
     exit 1
     ;;
 esac
 
+if [ "$SPEED" -le 0 ]; then
+  echo "❌ 限速必须大于 0"
+  exit 1
+fi
+
+# 自动识别主网卡
 IFACE=$(ip route get 1.1.1.1 | awk '{print $5; exit}')
 
-echo "网卡: $IFACE"
-echo "限速: ${SPEED} Mbps（上下行）"
+echo "------------------------------------"
+echo "主网卡: $IFACE"
+echo "下载限速: ${SPEED} Mbps"
+echo "------------------------------------"
 
-SCRIPT=/usr/local/bin/vps-limit-apply.sh
+### 1️⃣ 清理我们自己可能留下的规则（不碰 root）
+tc qdisc del dev "$IFACE" ingress 2>/dev/null || true
+tc qdisc del dev ifb0 root 2>/dev/null || true
+ip link del ifb0 2>/dev/null || true
 
-cat > $SCRIPT <<EOF
-#!/bin/bash
-
-# 下行（replace，避免 Exclusivity 报错）
-tc qdisc replace dev $IFACE root cake bandwidth ${SPEED}Mbit
-
-# 上行（ingress）
-tc qdisc del dev $IFACE ingress 2>/dev/null || true
+### 2️⃣ 创建 IFB
 modprobe ifb || true
 ip link add ifb0 type ifb 2>/dev/null || true
 ip link set ifb0 up
 
-tc qdisc replace dev $IFACE handle ffff: ingress
-tc filter replace dev $IFACE parent ffff: protocol ip u32 match u32 0 0 action mirred egress redirect dev ifb0
-tc qdisc replace dev ifb0 root cake bandwidth ${SPEED}Mbit
-EOF
+### 3️⃣ ingress → IFB
+tc qdisc add dev "$IFACE" handle ffff: ingress
+tc filter add dev "$IFACE" parent ffff: protocol ip u32 match u32 0 0 \
+  action mirred egress redirect dev ifb0
 
-chmod +x $SCRIPT
-
-cat > /etc/systemd/system/vps-limit.service <<EOF
-[Unit]
-Description=VPS Bandwidth Limit (${SPEED}Mbps)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=$SCRIPT
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable vps-limit
-systemctl restart vps-limit
+### 4️⃣ 在 IFB 上限速（这里一定成功）
+tc qdisc add dev ifb0 root cake bandwidth "${SPEED}Mbit"
 
 echo "===================================="
-echo "✅ 限速已成功应用"
-echo "验证: speedtest"
-echo "查看: tc qdisc show dev $IFACE"
+echo "✅ 下载限速 ${SPEED} Mbps 已生效"
+echo
+echo "验证命令："
+echo "  speedtest"
+echo
+echo "查看规则："
+echo "  tc qdisc show dev ifb0"
 echo "===================================="
