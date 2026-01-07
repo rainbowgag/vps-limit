@@ -2,7 +2,7 @@
 set -e
 
 echo "===================================="
-echo " VPS 限速脚本（云 VPS 最终稳定版）"
+echo " VPS 限速脚本"
 echo " - IFB + cake"
 echo " - 上下行同时限速"
 echo " - 兼容 curl | bash 执行方式"
@@ -15,7 +15,7 @@ else
   read -p "请输入限速值（单位：Mbps，将同时限制上下行）: " SPEED < /dev/tty
 fi
 
-# 清洗输入：去除所有非数字字符，包括空格、换行等
+# 清洗输入：去除所有非数字字符
 SPEED=$(echo "$SPEED" | tr -d '[:space:]' | tr -cd '0-9')
 
 # 验证输入
@@ -32,31 +32,64 @@ echo "主网卡: $IFACE"
 echo "限速值: ${SPEED} Mbps（上下行）"
 echo "------------------------------------"
 
-# 1️⃣ 清理旧规则
+# ==============================
+# 1️⃣ 清理旧规则（可能是我们之前加的）
+# ==============================
 tc qdisc del dev "$IFACE" root 2>/dev/null || true
 tc qdisc del dev "$IFACE" ingress 2>/dev/null || true
 tc qdisc del dev ifb0 root 2>/dev/null || true
 ip link del ifb0 2>/dev/null || true
 
+# ==============================
 # 2️⃣ 创建 IFB
+# ==============================
 modprobe ifb || true
 ip link add ifb0 type ifb 2>/dev/null || true
 ip link set ifb0 up
 
-# 3️⃣ 上行限速（root qdisc）
+# ==============================
+# 3️⃣ 上行限速（eth0 root）
+# ==============================
 tc qdisc add dev "$IFACE" root cake bandwidth "${SPEED}Mbit"
 
+# ==============================
 # 4️⃣ 下行限速（ingress → IFB）
+# ==============================
 tc qdisc add dev "$IFACE" handle ffff: ingress
 tc filter add dev "$IFACE" parent ffff: protocol ip u32 match u32 0 0 \
   action mirred egress redirect dev ifb0
 
-# 5️⃣ 在 IFB 上限速（下载流量）
+# ==============================
+# 5️⃣ IFB 下行限速
+# ==============================
 tc qdisc add dev ifb0 root cake bandwidth "${SPEED}Mbit"
+
+# ==============================
+# 6️⃣ 安装清除限速的短命令 limit-clear
+# ==============================
+CLEAR_CMD="/usr/local/bin/limit-clear"
+
+cat > "$CLEAR_CMD" <<'EOF'
+#!/bin/bash
+set -e
+
+IFACE=$(ip route get 1.1.1.1 | awk '{print $5; exit}')
+
+tc qdisc del dev "$IFACE" root 2>/dev/null || true
+tc qdisc del dev "$IFACE" ingress 2>/dev/null || true
+tc qdisc del dev ifb0 root 2>/dev/null || true
+ip link del ifb0 2>/dev/null || true
+
+echo "✅ VPS 限速已清除"
+EOF
+
+chmod +x "$CLEAR_CMD"
 
 echo "===================================="
 echo "✅ 限速 ${SPEED} Mbps（上下行）已生效"
-echo "验证：speedtest"
-echo "查看上行：tc qdisc show dev $IFACE"
-echo "查看下行：tc qdisc show dev ifb0"
+echo
+echo "📌 常用命令："
+echo "  查看上行：tc qdisc show dev $IFACE"
+echo "  查看下行：tc qdisc show dev ifb0"
+echo "  清除限速：limit-clear"
 echo "===================================="
