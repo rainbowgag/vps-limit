@@ -3,23 +3,16 @@ set -e
 
 echo "===================================="
 echo " VPS 限速脚本（云 VPS 最终稳定版）"
-echo " 说明："
-echo " - 使用 IFB + cake"
+echo " - IFB + cake"
 echo " - 不修改 eth0 root qdisc"
-echo " - 100% 兼容云厂商 VPS"
 echo "===================================="
 read -p "请输入下载限速（单位：Mbps）: " SPEED
 
-# 输入校验
-case "$SPEED" in
-  ''|*[!0-9]*)
-    echo "❌ 请输入正整数，例如 15"
-    exit 1
-    ;;
-esac
+# 清洗输入（解决 curl | bash + read 的坑）
+SPEED=$(echo "$SPEED" | tr -cd '0-9')
 
-if [ "$SPEED" -le 0 ]; then
-  echo "❌ 限速必须大于 0"
+if [ -z "$SPEED" ] || [ "$SPEED" -le 0 ]; then
+  echo "❌ 请输入有效的正整数，例如 15"
   exit 1
 fi
 
