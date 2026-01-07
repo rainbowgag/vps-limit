@@ -9,12 +9,17 @@ echo " - 兼容 curl | bash 执行方式"
 echo "===================================="
 
 # ⚠️ 关键：强制从终端读取输入
-read -p "请输入下载限速（单位：Mbps）: " SPEED < /dev/tty
+if [ -t 0 ]; then
+  read -p "请输入下载限速（单位：Mbps）: " SPEED
+else
+  read -p "请输入下载限速（单位：Mbps）: " SPEED < /dev/tty
+fi
 
-# 清洗输入
-SPEED=$(echo "$SPEED" | tr -cd '0-9')
+# 清洗输入：去除所有非数字字符，包括空格、换行等
+SPEED=$(echo "$SPEED" | tr -d '[:space:]' | tr -cd '0-9')
 
-if [ -z "$SPEED" ] || [ "$SPEED" -le 0 ]; then
+# 验证输入
+if [ -z "$SPEED" ] || [ "$SPEED" = "0" ] || ! [ "$SPEED" -gt 0 ] 2>/dev/null; then
   echo "❌ 请输入有效的正整数，例如 15"
   exit 1
 fi
