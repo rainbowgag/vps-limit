@@ -58,15 +58,20 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/bin/bash -c "\
-tc qdisc del dev $IFACE root 2>/dev/null || true; \
-tc qdisc del dev $IFACE ingress 2>/dev/null || true; \
-tc qdisc add dev $IFACE root cake bandwidth ${SPEED}Mbit; \
+IFACE=\$(ip route get 1.1.1.1 2>/dev/null | awk '{print \$5; exit}'); \
+if [ -z \"\$IFACE\" ]; then \
+  echo 'Error: Cannot detect network interface'; \
+  exit 1; \
+fi; \
+tc qdisc del dev \$IFACE root 2>/dev/null || true; \
+tc qdisc del dev \$IFACE ingress 2>/dev/null || true; \
+tc qdisc add dev \$IFACE root cake bandwidth ${SPEED}Mbit || exit 1; \
 modprobe ifb || true; \
 ip link add ifb0 type ifb 2>/dev/null || true; \
-ip link set ifb0 up; \
-tc qdisc add dev $IFACE handle ffff: ingress; \
-tc filter add dev $IFACE parent ffff: protocol ip u32 match u32 0 0 action mirred egress redirect dev ifb0; \
-tc qdisc add dev ifb0 root cake bandwidth ${SPEED}Mbit"
+ip link set ifb0 up || exit 1; \
+tc qdisc add dev \$IFACE handle ffff: ingress || exit 1; \
+tc filter add dev \$IFACE parent ffff: protocol ip u32 match u32 0 0 action mirred egress redirect dev ifb0 || exit 1; \
+tc qdisc add dev ifb0 root cake bandwidth ${SPEED}Mbit || exit 1"
 RemainAfterExit=yes
 
 [Install]
